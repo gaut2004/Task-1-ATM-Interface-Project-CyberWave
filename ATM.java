@@ -3,15 +3,21 @@ package ATM;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
-import java.sql.*;
+import java.util.HashMap;
+import java.util.Map;
+
+import com.mongodb.client.*;
+import org.bson.Document;
+import static com.mongodb.client.model.Filters.eq;
 
 public class ATM {
     private JFrame frame;
     private JPanel screenPanel;
     private JLabel screenMessage;
     private JPanel keypadPanel;
-    private Connection conn;
+    private MongoClient mongoClient;
+    private MongoDatabase database;
+    private MongoCollection<Document> usersCollection;
     private int currentAccountNumber = -1;
 
     public ATM() {
@@ -21,8 +27,11 @@ public class ATM {
 
     private void initializeDBConnection() {
         try {
-            conn = DriverManager.getConnection("jdbc:mysql://localhost:3306/atm_system", "root", "Gautam@2004");
-        } catch (SQLException e) {
+            // Connect to MongoDB
+            mongoClient = MongoClients.create("mongodb://localhost:27017");
+            database = mongoClient.getDatabase("atm_system");
+            usersCollection = database.getCollection("users");
+        } catch (Exception e) {
             JOptionPane.showMessageDialog(null, "Database Connection Failed!", "Error", JOptionPane.ERROR_MESSAGE);
         }
     }
@@ -35,9 +44,9 @@ public class ATM {
 
         // Bank name at the top
         JLabel bankNameLabel = new JLabel("Reserve Bank Of India", JLabel.CENTER);
-        bankNameLabel.setFont(new Font("Verdana", Font.BOLD, 24));  // Set font size and bold
-        bankNameLabel.setForeground(new Color(0, 122, 204));        // Blue color for bank name
-        frame.add(bankNameLabel, BorderLayout.NORTH);  // Add to the top of the frame
+        bankNameLabel.setFont(new Font("Verdana", Font.BOLD, 24));
+        bankNameLabel.setForeground(new Color(0, 122, 204));
+        frame.add(bankNameLabel, BorderLayout.NORTH);
 
         // Center screen for message
         screenPanel = new JPanel();
@@ -94,25 +103,21 @@ public class ATM {
     private void checkPIN() {
         try {
             String pinInput = screenMessage.getText();
-            String query = "SELECT * FROM users WHERE pin = ?";
-            PreparedStatement stmt = conn.prepareStatement(query);
-            stmt.setString(1, pinInput);
-            ResultSet rs = stmt.executeQuery();
+            Document user = usersCollection.find(eq("pin", pinInput)).first();
 
-            if (rs.next()) {
-                currentAccountNumber = rs.getInt("account_number");
+            if (user != null) {
+                currentAccountNumber = user.getInteger("account_number");
                 JOptionPane.showMessageDialog(null, "PIN Accepted. Access Granted.");
                 frame.dispose();
                 showMainOptions();
             } else {
                 JOptionPane.showMessageDialog(null, "Invalid PIN. Try Again.");
             }
-        } catch (SQLException e) {
+        } catch (Exception e) {
             JOptionPane.showMessageDialog(null, "Database error: " + e.getMessage());
         }
     }
 
-    // Main options screen after successful login
     private void showMainOptions() {
         frame = new JFrame("ATM Options");
         frame.setSize(600, 400);
@@ -142,85 +147,62 @@ public class ATM {
         frame.setVisible(true);
     }
 
-    // Option 1: Withdrawal
     private void withdrawAmount() {
         String amountStr = JOptionPane.showInputDialog("Enter the amount to withdraw:");
         int amount = Integer.parseInt(amountStr);
 
         try {
-            String query = "SELECT balance FROM users WHERE account_number = ?";
-            PreparedStatement stmt = conn.prepareStatement(query);
-            stmt.setInt(1, currentAccountNumber);
-            ResultSet rs = stmt.executeQuery();
-
-            if (rs.next()) {
-                int currentBalance = rs.getInt("balance");
+            Document user = usersCollection.find(eq("account_number", currentAccountNumber)).first();
+            if (user != null) {
+                int currentBalance = user.getInteger("balance");
 
                 if (currentBalance >= amount) {
                     currentBalance -= amount;
-
-                    String updateQuery = "UPDATE users SET balance = ? WHERE account_number = ?";
-                    PreparedStatement updateStmt = conn.prepareStatement(updateQuery);
-                    updateStmt.setInt(1, currentBalance);
-                    updateStmt.setInt(2, currentAccountNumber);
-                    updateStmt.executeUpdate();
+                    usersCollection.updateOne(eq("account_number", currentAccountNumber),
+                            new Document("$set", new Document("balance", currentBalance)));
 
                     JOptionPane.showMessageDialog(null, "Withdrawal successful. Remaining balance: " + currentBalance);
                 } else {
                     JOptionPane.showMessageDialog(null, "Insufficient balance.");
                 }
             }
-        } catch (SQLException e) {
+        } catch (Exception e) {
             JOptionPane.showMessageDialog(null, "Database error: " + e.getMessage());
         }
     }
 
-    // Option 2: Balance Enquiry
     private void checkBalance() {
         try {
-            String query = "SELECT balance FROM users WHERE account_number = ?";
-            PreparedStatement stmt = conn.prepareStatement(query);
-            stmt.setInt(1, currentAccountNumber);
-            ResultSet rs = stmt.executeQuery();
-
-            if (rs.next()) {
-                int balance = rs.getInt("balance");
+            Document user = usersCollection.find(eq("account_number", currentAccountNumber)).first();
+            if (user != null) {
+                int balance = user.getInteger("balance");
                 JOptionPane.showMessageDialog(null, "Your current balance is: " + balance);
             }
-        } catch (SQLException e) {
+        } catch (Exception e) {
             JOptionPane.showMessageDialog(null, "Database error: " + e.getMessage());
         }
     }
 
-    // Option 3: Deposit
     private void depositAmount() {
         String amountStr = JOptionPane.showInputDialog("Enter the amount to deposit:");
         int amount = Integer.parseInt(amountStr);
 
         try {
-            String query = "SELECT balance FROM users WHERE account_number = ?";
-            PreparedStatement stmt = conn.prepareStatement(query);
-            stmt.setInt(1, currentAccountNumber);
-            ResultSet rs = stmt.executeQuery();
-
-            if (rs.next()) {
-                int currentBalance = rs.getInt("balance");
+            Document user = usersCollection.find(eq("account_number", currentAccountNumber)).first();
+            if (user != null) {
+                int currentBalance = user.getInteger("balance");
                 currentBalance += amount;
 
-                String updateQuery = "UPDATE users SET balance = ? WHERE account_number = ?";
-                PreparedStatement updateStmt = conn.prepareStatement(updateQuery);
-                updateStmt.setInt(1, currentBalance);
-                updateStmt.setInt(2, currentAccountNumber);
-                updateStmt.executeUpdate();
+                usersCollection.updateOne(eq("account_number", currentAccountNumber),
+                        new Document("$set", new Document("balance", currentBalance)));
 
                 JOptionPane.showMessageDialog(null, "Deposit successful. New balance: " + currentBalance);
             }
-        } catch (SQLException e) {
+        } catch (Exception e) {
             JOptionPane.showMessageDialog(null, "Database error: " + e.getMessage());
         }
     }
 
-    // Option 4: Change/Generate PIN
     private void changePIN() {
         String newPin = JOptionPane.showInputDialog("Enter new 4-digit PIN:");
 
@@ -230,14 +212,11 @@ public class ATM {
         }
 
         try {
-            String updateQuery = "UPDATE users SET pin = ? WHERE account_number = ?";
-            PreparedStatement stmt = conn.prepareStatement(updateQuery);
-            stmt.setString(1, newPin);
-            stmt.setInt(2, currentAccountNumber);
-            stmt.executeUpdate();
+            usersCollection.updateOne(eq("account_number", currentAccountNumber),
+                    new Document("$set", new Document("pin", newPin)));
 
             JOptionPane.showMessageDialog(null, "PIN changed successfully.");
-        } catch (SQLException e) {
+        } catch (Exception e) {
             JOptionPane.showMessageDialog(null, "Database error: " + e.getMessage());
         }
     }
